@@ -1,0 +1,85 @@
+name: FINORA CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: finora_db
+          MYSQL_USER: finora_user
+          MYSQL_PASSWORD: finora_pass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      kafka:
+        image: apache/kafka:3.7.0
+        ports:
+          - 9092:9092
+        env:
+          KAFKA_NODE_ID: 1
+          KAFKA_PROCESS_ROLES: broker,controller
+          KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:29093,PLAINTEXT_HOST://:9092
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:29092,PLAINTEXT_HOST://localhost:9092
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:29093
+          KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Wait for MySQL to be ready
+        run: |
+          until mysqladmin ping -h 127.0.0.1 -u root -proot --silent; do
+            echo "Waiting for MySQL..."
+            sleep 2
+          done
+
+      - name: Run tests and build
+        env:
+          DB_URL: jdbc:mysql://localhost:3306/finora_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+          DB_USERNAME: finora_user
+          DB_PASSWORD: finora_pass
+          KAFKA_BOOTSTRAP_SERVERS: localhost:9092
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          JWT_SECRET: 4a6f686e446f654a6f686e446f654a6f686e446f654a6f686e446f654a6f686e446f654a6f686e446f65
+        run: mvn clean package
+
+      - name: Build Docker image
+        run: docker build -t finora-backend:ci .
