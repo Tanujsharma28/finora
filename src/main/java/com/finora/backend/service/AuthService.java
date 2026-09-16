@@ -18,10 +18,12 @@ public class AuthService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final AuditService auditService;
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
         if (userRepository.existsByEmail(request.getEmail())) {
+            auditService.log(null, "REGISTER_FAILED", "User", null, "Email already registered: " + request.getEmail());
             throw new IllegalArgumentException("Email already registered: " + request.getEmail());
         }
 
@@ -34,6 +36,8 @@ public class AuthService {
         User saved = userRepository.save(user);
         String token = jwtService.generateToken(saved.getId(), saved.getEmail());
 
+        auditService.log(saved.getId(), "REGISTER", "User", saved.getId(), "New account registered: " + saved.getEmail());
+
         return AuthResponse.builder()
                 .token(token)
                 .userId(saved.getId())
@@ -44,13 +48,18 @@ public class AuthService {
 
     public AuthResponse login(LoginRequest request) {
         User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new IllegalArgumentException("Invalid email or password"));
+                .orElseThrow(() -> {
+                    auditService.log(null, "LOGIN_FAILED", "User", null, "Unknown email: " + request.getEmail());
+                    return new IllegalArgumentException("Invalid email or password");
+                });
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
+            auditService.log(user.getId(), "LOGIN_FAILED", "User", user.getId(), "Wrong password");
             throw new IllegalArgumentException("Invalid email or password");
         }
 
         String token = jwtService.generateToken(user.getId(), user.getEmail());
+        auditService.log(user.getId(), "LOGIN", "User", user.getId(), "Successful login");
 
         return AuthResponse.builder()
                 .token(token)

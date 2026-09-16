@@ -24,4 +24,7 @@ public class CreateTransactionRequest {
 
     @NotNull(message = "txnType is required")
     private TransactionType txnType;
+
+    @NotBlank(message = "idempotencyKey is required")
+    private String idempotencyKey;
 }

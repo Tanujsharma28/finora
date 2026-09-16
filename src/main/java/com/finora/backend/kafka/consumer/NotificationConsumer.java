@@ -24,10 +24,18 @@ public class NotificationConsumer {
     public void consume(TransactionEvent event) {
         log.info("[Notification] New transaction initiated userId={} txnId={}", event.getUserId(), event.getTransactionId());
 
+        String message = String.format(
+                "%s of ₹%.2f %s",
+                event.getTxnType().name(),
+                event.getAmount(),
+                event.getMerchant() != null ? "at " + event.getMerchant() : "initiated"
+        );
+
         messagingTemplate.convertAndSend(
                 "/topic/notifications/" + event.getAccountId(),
                 Map.of(
                         "type", "TRANSACTION_INITIATED",
+                        "message", message,
                         "transactionId", event.getTransactionId(),
                         "accountId", event.getAccountId()
                 )

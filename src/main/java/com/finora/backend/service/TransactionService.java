@@ -22,10 +22,16 @@ public class TransactionService {
     private final TransactionRepository transactionRepository;
     private final AccountRepository accountRepository;
     private final TransactionEventProducer transactionEventProducer;
-    
-     @CacheEvict(value = "accounts", key = "#request.accountId")
+    private final AuditService auditService;
+
+    @CacheEvict(value = "accounts", key = "#request.accountId")
     @Transactional
     public TransactionResponse createTransaction(CreateTransactionRequest request) {
+        var existing = transactionRepository.findByIdempotencyKey(request.getIdempotencyKey());
+        if (existing.isPresent()) {
+            return toResponse(existing.get());
+        }
+
         Account account = accountRepository.findById(request.getAccountId())
                 .orElseThrow(() -> new IllegalArgumentException("Account not found: " + request.getAccountId()));
 
@@ -36,6 +42,7 @@ public class TransactionService {
                 .merchant(request.getMerchant())
                 .txnType(request.getTxnType())
                 .status(TransactionStatus.PENDING)
+                .idempotencyKey(request.getIdempotencyKey())
                 .build();
 
         Transaction saved = transactionRepository.save(txn);
@@ -44,6 +51,9 @@ public class TransactionService {
                 ? request.getAmount().negate()
                 : request.getAmount();
         accountRepository.adjustBalance(account.getId(), delta);
+
+        auditService.log(account.getUser().getId(), "TRANSACTION_CREATED", "Transaction", saved.getId(),
+                request.getTxnType() + " of " + request.getAmount() + " on account " + account.getId());
 
         transactionEventProducer.publish(TransactionEvent.builder()
                 .transactionId(saved.getId())
@@ -59,6 +69,60 @@ public class TransactionService {
         return toResponse(saved);
     }
 
+    @CacheEvict(value = "accounts", allEntries = true)
+    @Transactional
+    public TransactionResponse reverseTransaction(String transactionId) {
+        Transaction original = transactionRepository.findById(transactionId)
+                .orElseThrow(() -> new IllegalArgumentException("Transaction not found: " + transactionId));
+
+        if (original.getStatus() != TransactionStatus.FLAGGED) {
+            throw new IllegalStateException("Only FLAGGED transactions can be reversed");
+        }
+
+        TransactionType compensatingType = original.getTxnType() == TransactionType.DEBIT
+                ? TransactionType.CREDIT
+                : TransactionType.DEBIT;
+
+        BigDecimal delta = compensatingType == TransactionType.CREDIT
+                ? original.getAmount()
+                : original.getAmount().negate();
+
+        accountRepository.adjustBalance(original.getAccount().getId(), delta);
+
+        Transaction compensating = Transaction.builder()
+                .account(original.getAccount())
+                .amount(original.getAmount())
+                .category("REVERSAL")
+                .merchant("Reversal of " + (original.getMerchant() != null ? original.getMerchant() : original.getId()))
+                .txnType(compensatingType)
+                .status(TransactionStatus.COMPLETED)
+                .build();
+        transactionRepository.save(compensating);
+
+        // Save account/user IDs before session is cleared
+        String accountId = original.getAccount().getId();
+        String userId = original.getAccount().getUser().getId();
+
+        transactionRepository.markAsReversed(original.getId());
+
+        auditService.log(userId, "TRANSACTION_REVERSED", "Transaction", original.getId(),
+                "Reversed FLAGGED transaction of " + original.getAmount() + " on account " + accountId);
+
+        transactionEventProducer.publish(TransactionEvent.builder()
+                .transactionId(original.getId())
+                .accountId(accountId)
+                .userId(userId)
+                .amount(original.getAmount())
+                .category(original.getCategory())
+                .merchant(original.getMerchant())
+                .txnType(original.getTxnType())
+                .createdAt(original.getCreatedAt())
+                .build());
+
+        original.setStatus(TransactionStatus.REVERSED);
+        return toResponse(original);
+    }
+
     public List<TransactionResponse> getTransactionsByAccount(String accountId) {
         return transactionRepository
                 .findByAccountIdOrderByCreatedAtDesc(accountId, PageRequest.of(0, 50))
@@ -66,6 +130,33 @@ public class TransactionService {
                 .map(this::toResponse)
                 .toList();
     }
+    public String exportTransactionsAsCsv(String accountId) {
+    List<Transaction> transactions = transactionRepository
+            .findByAccountIdOrderByCreatedAtDesc(accountId, PageRequest.of(0, 1000))
+            .getContent();
+
+    StringBuilder csv = new StringBuilder();
+    csv.append("Date,Type,Category,Merchant,Amount,Status\n");
+
+    for (Transaction txn : transactions) {
+        csv.append(txn.getCreatedAt()).append(",")
+           .append(txn.getTxnType()).append(",")
+           .append(escapeCsv(txn.getCategory())).append(",")
+           .append(escapeCsv(txn.getMerchant() != null ? txn.getMerchant() : "")).append(",")
+           .append(txn.getAmount()).append(",")
+           .append(txn.getStatus()).append("\n");
+    }
+
+    return csv.toString();
+}
+
+private String escapeCsv(String value) {
+    if (value == null) return "";
+    if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
+        return "\"" + value.replace("\"", "\"\"") + "\"";
+    }
+    return value;
+}
 
     private TransactionResponse toResponse(Transaction txn) {
         return TransactionResponse.builder()

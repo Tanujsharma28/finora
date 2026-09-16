@@ -44,6 +44,26 @@ public class GlobalExceptionHandler {
         return pd;
     }
 
+    /** Resource lookup failures → 404 Not Found */
+    @ExceptionHandler(ResourceNotFoundException.class)
+    public ProblemDetail handleNotFound(ResourceNotFoundException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        pd.setTitle("Resource not found");
+        pd.setDetail(ex.getMessage());
+        pd.setType(URI.create("urn:finora:error:not-found"));
+        return pd;
+    }
+
+    /** Invalid state transitions / business-state conflicts → 422 */
+    @ExceptionHandler(IllegalStateException.class)
+    public ProblemDetail handleIllegalState(IllegalStateException ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.UNPROCESSABLE_ENTITY);
+        pd.setTitle("Business rule violation");
+        pd.setDetail(ex.getMessage());
+        pd.setType(URI.create("urn:finora:error:business"));
+        return pd;
+    }
+
     /** Catch-all → 500 Internal Server Error */
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleGeneric(Exception ex) {

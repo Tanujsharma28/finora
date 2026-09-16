@@ -17,6 +17,7 @@ public class TransferService {
     private final TransferRepository transferRepository;
     private final AccountRepository accountRepository;
     private final TransferLegService transferLegService;
+    private final AuditService auditService;
 
     public TransferResponse transfer(TransferRequest request) {
 
@@ -57,6 +58,8 @@ public class TransferService {
             transfer.setStatus(TransferStatus.FAILED);
             transfer.setFailureReason("Debit failed: " + e.getMessage());
             transferRepository.save(transfer);
+            auditService.log(fromAccount.getUser().getId(), "TRANSFER_FAILED", "Transfer", transfer.getId(),
+                    "Debit leg failed: " + e.getMessage());
             return toResponse(transfer);
         }
 
@@ -72,6 +75,8 @@ public class TransferService {
             transfer.setStatus(TransferStatus.COMPENSATED);
             transfer.setFailureReason("Credit failed, debit reversed: " + e.getMessage());
             transferRepository.save(transfer);
+            auditService.log(fromAccount.getUser().getId(), "TRANSFER_COMPENSATED", "Transfer", transfer.getId(),
+                    "Credit leg failed, debit reversed: " + e.getMessage());
             return toResponse(transfer);
         }
 
@@ -81,6 +86,9 @@ public class TransferService {
 
         log.info("[Transfer] Completed transfer={} amount={} from={} to={}",
                 transfer.getId(), request.getAmount(), fromAccount.getId(), toAccount.getId());
+
+        auditService.log(fromAccount.getUser().getId(), "TRANSFER_COMPLETED", "Transfer", transfer.getId(),
+                request.getAmount() + " from " + fromAccount.getId() + " to " + toAccount.getId());
 
         return toResponse(transfer);
     }

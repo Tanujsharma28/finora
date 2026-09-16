@@ -22,7 +22,20 @@ public class TransactionController {
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
     @GetMapping
-public ResponseEntity<java.util.List<TransactionResponse>> getTransactions(@RequestParam String accountId) {
-    return ResponseEntity.ok(transactionService.getTransactionsByAccount(accountId));
+    public ResponseEntity<java.util.List<TransactionResponse>> getTransactions(@RequestParam String accountId) {
+        return ResponseEntity.ok(transactionService.getTransactionsByAccount(accountId));
+    }
+
+    @PostMapping("/{id}/reverse")
+    public ResponseEntity<TransactionResponse> reverseTransaction(@PathVariable String id) {
+        return ResponseEntity.ok(transactionService.reverseTransaction(id));
+    }
+    @GetMapping("/{accountId}/export")
+public ResponseEntity<String> exportTransactions(@PathVariable String accountId) {
+    String csv = transactionService.exportTransactionsAsCsv(accountId);
+    return ResponseEntity.ok()
+            .header("Content-Disposition", "attachment; filename=\"statement-" + accountId + ".csv\"")
+            .header("Content-Type", "text/csv")
+            .body(csv);
 }
 }

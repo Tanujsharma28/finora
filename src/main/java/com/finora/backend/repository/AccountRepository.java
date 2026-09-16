@@ -13,6 +13,7 @@ import java.util.Optional;
 public interface AccountRepository extends JpaRepository<Account, String> {
     List<Account> findByUserId(String userId);
     Optional<Account> findByAccountNumber(String accountNumber);
+    boolean existsByIdAndUser_Id(String id, String userId);
 
     @Modifying
     @Query("UPDATE Account a SET a.balance = a.balance + :delta WHERE a.id = :accountId")

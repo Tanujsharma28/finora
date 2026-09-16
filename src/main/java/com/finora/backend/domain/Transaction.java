@@ -38,6 +38,9 @@ public class Transaction {
     @Column(nullable = false, length = 20)
     private TransactionStatus status;
 
+    @Column(name = "idempotency_key", length = 100, unique = true)
+    private String idempotencyKey;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
